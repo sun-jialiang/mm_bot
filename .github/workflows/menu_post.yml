@@ -1,0 +1,30 @@
+name: Daily Menu to Mattermost
+
+on:
+  schedule:
+  - cron: '37 9 * * 1-5'
+
+  workflow_dispatch:
+
+
+jobs:
+  post-menu:
+    runs-on: ubuntu-latest
+    env:
+      MM_WEBHOOK_URL: ${{ secrets.DESY_MENU_WEBHOOK_URL }}
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.13'
+
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+
+    - name: Post menu to Mattermost
+      run: |
+        python menu_post.py
