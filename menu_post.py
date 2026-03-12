@@ -41,12 +41,15 @@ def extract_menu_for_day(pdf_bytes: bytes, target_day: str = "tuesday") -> str:
     target_day = target_day.lower()
 
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-        page = pdf.pages[2]  # this PDF has English menu on page index 2
-        text = (page.extract_text() or "").lower()
-        if not all(day in text for day in WEEKDAYS):
-            raise RuntimeError("This page does not look like the weekly menu page")
+        table = None
+        for page in pdf.pages:
+            text = (page.extract_text() or "").lower()
+            if all(day in text for day in WEEKDAYS):
+                table = page.extract_table()
+                break
 
-        table = page.extract_table()
+        if table is None:
+            raise RuntimeError("Could not find the weekly menu page in the PDF")
         if not table:
             raise RuntimeError("Could not extract table from menu page")
 
