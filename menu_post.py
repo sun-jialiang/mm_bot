@@ -93,7 +93,7 @@ def send_to_mattermost(text: str):
     """Send a message to Mattermost via webhook."""
     webhook_url = os.environ.get("MM_WEBHOOK_URL")
     if not webhook_url:
-        print("GitHub secret not accessed")
+        raise RuntimeError("MM_WEBHOOK_URL environment variable is not set")
 
     resp = requests.post(webhook_url, json={"text": text}, timeout=10)
     resp.raise_for_status()
