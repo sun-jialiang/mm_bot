@@ -1,17 +1,55 @@
+import io
+import json
 import os
+import random
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin
-import io
-import pdfplumber
 from datetime import datetime
+from urllib.parse import urljoin
 from zoneinfo import ZoneInfo
+import pdfplumber
 from desy import extract_pdf_text, fetch_menu_pdf, find_daily_menu, clean_menu_text
 from cfel import scrape_headlines_and_prices, format_menus  # noqa
 
+# Feature toggles
+TOPIC_OF_THE_DAY = True  # When True, the menu is wrapped in a themed daily style
+
+# URLs to scrape
 MENU_PAGE_URL = "https://www.labcuisine.de/menu/"
 DESY_URL = "https://desy.myalsterfood.de/download/en/menu.pdf"
 CFEL_URL = "https://www.stwhh.de/gastronomie/mensen-cafes-weiteres/mensa/cafe-cfel"
+
+
+def get_daily_style() -> dict:
+    """Load a style from styles.json, selected deterministically by today's date.
+
+    The same style is returned for the entire day.  The style name is never
+    included in the returned dict so that the theme remains undisclosed to
+    channel members — making it an implicit guessing game.
+    """
+    styles_path = os.path.join(os.path.dirname(__file__), "styles.json")
+    try:
+        with open(styles_path) as f:
+            styles = json.load(f)
+    except FileNotFoundError:
+        raise RuntimeError(
+            f"styles.json not found at {styles_path}. "
+            "This file is required when TOPIC_OF_THE_DAY is enabled."
+        )
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"styles.json contains invalid JSON (required for TOPIC_OF_THE_DAY): {exc}"
+        )
+    if not styles:
+        raise RuntimeError(
+            "styles.json must contain at least one style entry "
+            "(required for TOPIC_OF_THE_DAY)."
+        )
+    berlin = ZoneInfo("Europe/Berlin")
+    today = datetime.now(berlin)
+    seed = today.year * 10000 + today.month * 100 + today.day
+    rng = random.Random(seed)
+    return rng.choice(styles)
 
 
 def get_target_day() -> str | None:
@@ -129,11 +167,15 @@ def main():
 ```text
 {desy_menu}
 ```
-[Max Planck]({mp_pdf_url}) 
+[Max Planck]({mp_pdf_url})
 ```text
 {mp_menu}
 ```
 """
+
+    if TOPIC_OF_THE_DAY:
+        style = get_daily_style()
+        message = f"{style['intro']}\n{message}\n{style['outro']}"
 
     send_to_mattermost(message)
 
