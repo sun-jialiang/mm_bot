@@ -2,7 +2,7 @@ name: Daily Menu to Mattermost
 
 on:
   schedule:
-  - cron: '37 8 * * 1-5'
+  - cron: '37 7 * * 1-5'
 
   workflow_dispatch:
 
