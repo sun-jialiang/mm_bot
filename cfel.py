@@ -146,6 +146,10 @@ def format_menus(
     return "\n".join(lines)
 
 
+def get_daily_menu() -> str:
+    """Fetch and format the CFEL/UHH menu."""
+    return format_menus(scrape_headlines_and_prices(CFEL_URL))
+
+
 if __name__ == "__main__":
-    data = scrape_headlines_and_prices(CFEL_URL)
-    print(format_menus(data))
+    print(get_daily_menu())

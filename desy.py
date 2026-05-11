@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from typing import List, Optional
 
 # --- Constants ---
+DESY_MENU_PDF_URL = "https://desy.myalsterfood.de/download/en/menu.pdf"
 PRICE_RE = re.compile(r"€\s*([\d\.,]+)")
 NUTRITION_KEYWORDS = ("kcal", "P:", "F:", "C:")
 ALLERGENS_RE = re.compile(r"^[\d\)\(\s\.\-\,/]+$")
@@ -59,9 +60,20 @@ def clean_menu_text(header: List[str], daily_menu: List[str]) -> str:
 def fetch_menu_pdf(url: str, session: Optional[requests.Session] = None) -> bytes:
     """Download a PDF from a URL and return the raw bytes."""
     session = session or requests.Session()
-    r = session.get(url)
+    r = session.get(url, timeout=10)
     r.raise_for_status()
     return r.content
+
+
+def get_daily_menu(target_day: str) -> str:
+    """Fetch the DESY menu PDF and extract the target day's menu."""
+    pdf_tables = extract_pdf_text(fetch_menu_pdf(DESY_MENU_PDF_URL))
+    daily_menu = find_daily_menu(pdf_tables)
+    if not daily_menu:
+        return f"No DESY menu found for {target_day.title()}"
+
+    header = pdf_tables[0][0]
+    return clean_menu_text(header, daily_menu)
 
 
 def extract_pdf_text(pdf_bytes: bytes) -> List[List[List[str]]]:
@@ -87,13 +99,5 @@ def find_daily_menu(
 
 # --- Main ---
 if __name__ == "__main__":
-    url = "https://desy.myalsterfood.de/download/en/menu.pdf"
-
-    pdf_tables = extract_pdf_text(fetch_menu_pdf(url))
-    daily_menu = find_daily_menu(pdf_tables)
-
-    if daily_menu:
-        header = pdf_tables[0][0]  # first row is header
-        print(clean_menu_text(header, daily_menu))
-    else:
-        print("Today's menu not found.")
+    target_day = datetime.now(ZoneInfo("Europe/Berlin")).strftime("%A").lower()
+    print(get_daily_menu(target_day))
