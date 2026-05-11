@@ -1,23 +1,18 @@
-import io
+from __future__ import annotations
+
 import json
 import os
 import random
 import requests
-from bs4 import BeautifulSoup
 from datetime import datetime
-from urllib.parse import urljoin
 from zoneinfo import ZoneInfo
-import pdfplumber
-from desy import extract_pdf_text, fetch_menu_pdf, find_daily_menu, clean_menu_text
-from cfel import scrape_headlines_and_prices, format_menus  # noqa
+
+from cfel import CFEL_URL, get_daily_menu as get_cfel_menu
+from desy import DESY_MENU_PDF_URL, get_daily_menu as get_desy_menu
+from max_planck import get_daily_menu as get_max_planck_menu
 
 # Feature toggles
 TOPIC_OF_THE_DAY = True  # When True, the menu is wrapped in a themed daily style
-
-# URLs to scrape
-MENU_PAGE_URL = "https://www.labcuisine.de/menu/"
-DESY_URL = "https://desy.myalsterfood.de/download/en/menu.pdf"
-CFEL_URL = "https://www.stwhh.de/gastronomie/mensen-cafes-weiteres/mensa/cafe-cfel"
 
 
 def get_daily_style() -> dict:
@@ -61,72 +56,6 @@ def get_target_day() -> str | None:
     return mapping.get(weekday)  # None on weekend
 
 
-def get_max_planck_pdf() -> str:
-    """Find the first PDF link on the Max Planck menu page."""
-    resp = requests.get(MENU_PAGE_URL, timeout=10)
-    resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, "html.parser")
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-        if href.lower().endswith(".pdf"):
-            return urljoin(MENU_PAGE_URL, href)
-    raise RuntimeError("Could not find any PDF link on the menu page")
-
-
-def extract_menu_for_day(pdf_bytes: bytes, target_day: str = "tuesday") -> str:
-    """Extract Max Planck menu for a specific day from weekly PDF."""
-    WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday"]
-    target_day = target_day.lower()
-
-    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-        table = None
-        for page in pdf.pages:
-            text = (page.extract_text() or "").lower()
-            if all(day in text for day in WEEKDAYS):
-                table = page.extract_table()
-                break
-
-        if table is None:
-            raise RuntimeError("Could not find the weekly menu page in the PDF")
-        if not table:
-            raise RuntimeError("Could not extract table from menu page")
-
-    header = table[0]
-    header_idx = next(
-        (j for j, cell in enumerate(header) if cell and target_day in cell.lower()),
-        None,
-    )
-    if header_idx is None:
-        raise RuntimeError(f"Could not find header for {target_day!r}")
-
-    content_col = max(header_idx - 1, 0)
-    lines: list[str] = []
-
-    for row in table[1:4]:  # skip header row
-        if not row or content_col >= len(row):
-            continue
-        label = " ".join(row[0].split()) if row[0] else ""
-        dish = " ".join(row[content_col].split())
-        if not dish:
-            continue
-        lines.append(f"{label}: {dish}" if label else dish)
-
-    return (
-        "\n".join(lines) if lines else f"No menu entries found for {target_day.title()}"
-    )
-
-
-def extract_desy_menu(target_day: str) -> str:
-    """Fetch DESY menu PDF and extract today's menu in clean text format."""
-    pdf_bytes = fetch_menu_pdf(DESY_URL)
-    pdf_tables = extract_pdf_text(pdf_bytes)
-    daily_menu_row = find_daily_menu(pdf_tables)
-    if not daily_menu_row:
-        return f"No DESY menu found for {target_day.title()}"
-    header = pdf_tables[0][0]  # first row is header
-    return clean_menu_text(header, daily_menu_row)
-
-
 def send_to_mattermost(text: str):
     """Send a message to Mattermost via webhook."""
     webhook_url = os.environ.get("MM_WEBHOOK_URL")
@@ -138,45 +67,37 @@ def send_to_mattermost(text: str):
     print("Sent successfully:", resp.text)
 
 
+def format_section(title: str, url: str, text: str) -> str:
+    return f"[{title}]({url})\n```text\n{text}\n```"
+
+
+def build_message(target_day: str) -> str:
+    cfel_menu = get_cfel_menu()
+    desy_menu = get_desy_menu(target_day)
+    max_planck_menu = get_max_planck_menu(target_day)
+
+    sections = [
+        format_section("CFEL/UHH", CFEL_URL, cfel_menu),
+        format_section("DESY", DESY_MENU_PDF_URL, desy_menu),
+        format_section("Max Planck", max_planck_menu.pdf_url, max_planck_menu.text),
+    ]
+
+    message = "@channel\n\n" + "\n\n".join(sections)
+
+    if TOPIC_OF_THE_DAY:
+        style = get_daily_style()
+        message = f"{style['intro']}\n{message}\n{style['outro']}"
+
+    return message
+
+
 def main():
     today = get_target_day()
     if not today:
         print("No menu: today is weekend.")
         return
 
-    # Max Planck menu
-    mp_pdf_url = get_max_planck_pdf()
-    mp_pdf_resp = requests.get(mp_pdf_url, timeout=10)
-    mp_pdf_resp.raise_for_status()
-    mp_menu = extract_menu_for_day(mp_pdf_resp.content, today)
-
-    # DESY menu
-    desy_menu = extract_desy_menu(today)
-
-    # CFEL menu
-    cfel_menu = format_menus(scrape_headlines_and_prices(CFEL_URL))
-
-    message = f"""
-@channel
-[CFEL/UHH]({CFEL_URL})
-```text
-{cfel_menu}
-```
-
-[DESY]({DESY_URL})
-```text
-{desy_menu}
-```
-[Max Planck]({mp_pdf_url})
-```text
-{mp_menu}
-```
-"""
-
-    if TOPIC_OF_THE_DAY:
-        style = get_daily_style()
-        message = f"{style['intro']}\n{message}\n{style['outro']}"
-
+    message = build_message(today)
     send_to_mattermost(message)
 
 
